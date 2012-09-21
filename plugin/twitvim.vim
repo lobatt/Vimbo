@@ -804,6 +804,7 @@ let s:gc_consumer_secret = "U1uvxLjZxlQAasy9Kr5L2YAFnsvYTOqx1bk7uJuezQ"
 let s:gc_req_url = "http://api.twitter.com/oauth/request_token"
 let s:gc_access_url = "http://api.twitter.com/oauth/access_token"
 let s:gc_authorize_url = "https://api.twitter.com/oauth/authorize"
+let s:gc_weibo_api_base_url = "https://api.weibo.com/2"
 
 " Simple nonce value generator. This needs to be randomized better.
 function! s:nonce()
@@ -1118,6 +1119,7 @@ function! s:curl_curl(url, login, proxy, proxylogin, parms)
 
     let curlcmd .= '"'.a:url.'"'
 
+	echo curlcmd
     let output = system(curlcmd)
     let errormsg = s:xml_get_element(output, 'error')
     if v:shell_error != 0
@@ -3476,6 +3478,9 @@ endif
 if !exists(":FavTwitter")
     command -count=1 FavTwitter :call <SID>get_timeline('favorites', '', <count>)
 endif
+if !exists(":Weibo")
+    command -count=1 Weibo :call <SID>vimbo_get_timeline('weibo','',<count>)
+endif
 
 nnoremenu Plugin.TwitVim.-Sep1- :
 nnoremenu Plugin.TwitVim.&Friends\ Timeline :call <SID>get_timeline("friends", '', 1)<cr>
@@ -5192,6 +5197,58 @@ function! s:Summize(query, page)
     endif
 
     call s:get_summize(query, a:page)
+endfunction
+
+"Vimbo test
+function! s:vimbo_get_timeline(tline_name, username, page)
+    " Call oauth/request_token to get request token from Twitter.
+
+    let token = "2.00nNI8wB0lZumGeeb7612510LZIOtC"
+    let req_url = s:to_https(s:gc_weibo_api_base_url)
+    let req_url = req_url."/statuses/friends_timeline.json"
+	let req_url = s:add_to_url(req_url, 'access_token='.token)
+
+
+    "let [error, output] = s:run_curl(req_url, '', s:get_proxy(), s:get_proxy_login(), { "dummy" : "1" })
+    let output = system("curl -s ".req_url)
+
+    "if error != ''
+	"call s:errormsg("Error: ".error)
+	"return
+    "endif
+
+    let result = s:parse_json(output)
+
+    let text = []
+
+    let title = 'Weibo'
+
+    let s:curbuffer.showheader = s:get_show_header()
+    if s:curbuffer.showheader
+	call add(text, title.'*')
+	call add(text, repeat('=', s:mbstrlen(title)).'*')
+    endif
+
+    for item in get(result, 'statuses', {})
+	call add(text, s:convert_entity(get(get(item, 'user', ''), 'screen_name')).":".s:convert_entity(get(item, 'text', '')))
+	call add(text, "--")
+    endfor
+
+    "call s:save_buffer(0)
+    call s:twitter_wintext(text, "timeline")
+    "let s:curbuffer = {}
+    let s:curbuffer.buffer = text
+    let s:curbuffer.buftype = a:tline_name
+    let s:curbuffer.user = a:username
+    let s:curbuffer.list = ''
+    let s:curbuffer.page = a:page
+    redraw
+    call s:save_buffer(0)
+
+"   let foruser = a:username == '' ? '' : ' for user '.a:username
+
+    " Uppercase the first letter in the timeline name.
+"    echo substitute(tl_name, '^.', '\u&', '') "timeline updated".foruser."."
 endfunction
 
 if !exists(":Summize")
