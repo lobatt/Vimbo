@@ -130,6 +130,11 @@ function! s:get_consumer_key()
     return exists('g:twitvim_consumer_key') ? g:twitvim_consumer_key : s:gc_consumer_key
 endfunction
 
+" Allow user to override consumer key.
+function! s:get_weibo_app_key()
+    return exists('g:twitvim_consumer_key') ? g:twitvim_consumer_key : s:gc_weibo_app_key
+endfunction
+
 " Allow user to override consumer secret.
 function! s:get_consumer_secret()
     return exists('g:twitvim_consumer_secret') ? g:twitvim_consumer_secret : s:gc_consumer_secret
@@ -804,7 +809,11 @@ let s:gc_consumer_secret = "U1uvxLjZxlQAasy9Kr5L2YAFnsvYTOqx1bk7uJuezQ"
 let s:gc_req_url = "http://api.twitter.com/oauth/request_token"
 let s:gc_access_url = "http://api.twitter.com/oauth/access_token"
 let s:gc_authorize_url = "https://api.twitter.com/oauth/authorize"
+
+
+let s:gc_weibo_app_key = "100315241"
 let s:gc_weibo_api_base_url = "https://api.weibo.com/2"
+let s:gc_weibo_login_url = "https://api.weibo.com/oauth2/authorize"
 
 " Simple nonce value generator. This needs to be randomized better.
 function! s:nonce()
@@ -3478,8 +3487,17 @@ endif
 if !exists(":FavTwitter")
     command -count=1 FavTwitter :call <SID>get_timeline('favorites', '', <count>)
 endif
+
 if !exists(":Weibo")
     command -count=1 Weibo :call <SID>vimbo_get_timeline('weibo','',<count>)
+endif
+
+if !exists(":PostWeibo")
+    command PostWeibo :call <SID>CmdLine_Weibo('', 0)
+endif
+
+if !exists(":LoginWeibo")
+    command LoginWeibo :call <SID>prompt_vimbo_login()
 endif
 
 nnoremenu Plugin.TwitVim.-Sep1- :
@@ -5199,15 +5217,97 @@ function! s:Summize(query, page)
     call s:get_summize(query, a:page)
 endfunction
 
+" Perform the OAuth 2 authorization for Weibo
+function! s:do_oauth2()
+    " Call oauth/request_token to get request token from Twitter.
+
+    let parms = {}
+	"?client_id=100315241&response_type=code&redirect_uri=http://vimbo.sinaapp.com/
+    let parms["client_id"] = s:get_weibo_app_key()
+
+    " Get the timestamp and add to hash
+    let parms["response_type"] = "code"
+
+    let parms["redirect_uri"] = "http://vimbo.sinaapp.com/auth"
+
+    let req_url = s:to_https(s:gc_weibo_login_url)
+
+	let req_url .= "?"
+
+    for key in sort(keys(parms))
+	let value = s:url_encode(parms[key])
+	let req_url .= key . "=" . value . "&"
+    endfor
+
+	" Attempt to shorten the auth URL.
+	let newurl = s:call_isgd(req_url)
+	if newurl != ""
+	    let req_url = newurl
+	else
+	    let newurl = s:call_bitly(req_url)
+	    if newurl != ""
+		let req_url = newurl
+	    endif
+	endif
+
+	echo "Visit the following URL in your browser to authenticate TwitVim:"
+	echo req_url
+
+    call inputsave()
+    let pin = input("Enter Weibo Access Token: ")
+    call inputrestore()
+
+    if pin == ""
+	call s:warnmsg("No OAuth PIN entered")
+	return [-3, '']
+    endif
+
+    return [ 0, pin]
+endfunction
+
+" Perform an Weibo OAuth2 login.
+function! s:do_vimbo_login()
+    let [ retval, s:access_token ] = s:do_oauth2()
+    if retval < 0
+	return [ -1, "Error from do_oauth(): ".retval ]
+    endif
+
+    let tokenrec = {}
+    let tokenrec.token = s:access_token
+    let tokenrec.secret = "dummy"
+    let tokenrec.name = "lobatt"
+    call s:save_token(tokenrec)
+    call s:write_tokens("lobatt")
+
+    redraw
+    echo "Logged in"
+
+    return [ 0, '' ]
+endfunction
+
+" Log in to a Twitter account.
+function! s:prompt_vimbo_login()
+    call s:do_vimbo_login()
+endfunction
+
 "Vimbo test
 function! s:vimbo_get_timeline(tline_name, username, page)
     " Call oauth/request_token to get request token from Twitter.
 
-    let token = "2.00nNI8wB0lZumGeeb7612510LZIOtC"
+	if !exists('s:access_token') || s:access_token == ''
+	    call s:read_tokens()
+	    if !exists('s:access_token') || s:access_token == ''
+		let [ status, error ] = s:do_vim_login()
+		if status < 0
+		    return [ error, '' ]
+		endif
+	    endif
+	endif
+
+	let token = s:access_token
     let req_url = s:to_https(s:gc_weibo_api_base_url)
     let req_url = req_url."/statuses/friends_timeline.json"
 	let req_url = s:add_to_url(req_url, 'access_token='.token)
-
 
     "let [error, output] = s:run_curl(req_url, '', s:get_proxy(), s:get_proxy_login(), { "dummy" : "1" })
     let output = system("curl -s ".req_url)
@@ -5249,6 +5349,85 @@ function! s:vimbo_get_timeline(tline_name, username, page)
 
     " Uppercase the first letter in the timeline name.
 "    echo substitute(tl_name, '^.', '\u&', '') "timeline updated".foruser."."
+endfunction
+
+function! s:post_weibo(mesg, inreplyto)
+	if !exists('s:access_token') || s:access_token == ''
+	    call s:read_tokens()
+	    if !exists('s:access_token') || s:access_token == ''
+		let [ status, error ] = s:do_vim_login()
+		if status < 0
+		    return [ error, '' ]
+		endif
+	    endif
+	endif
+
+
+    let parms = {}
+
+    " Add in_reply_to_status_id if status ID is available.
+    if a:inreplyto != 0
+	let parms["in_reply_to_status_id"] = a:inreplyto
+    endif
+
+    let mesg = a:mesg
+
+    " Remove trailing newline. You see that when you visual-select an entire
+    " line. Don't let it count towards the tweet length.
+    let mesg = substitute(mesg, '\n$', '', "")
+
+    " Convert internal newlines to spaces.
+    let mesg = substitute(mesg, '\n', ' ', "g")
+
+    let mesglen = s:mbstrlen(mesg)
+
+    " Check tweet length. Note that the tweet length should be checked before
+    " URL-encoding the special characters because URL-encoding increases the
+    " string length.
+    if mesglen > s:char_limit
+	call s:warnmsg("Your tweet has ".(mesglen - s:char_limit)." too many characters. It was not sent.")
+    elseif mesglen < 1
+	call s:warnmsg("Your tweet was empty. It was not sent.")
+    else
+	redraw
+	echo "Sending update to Twitter..."
+
+	let token = s:access_token
+    let req_url = s:to_https(s:gc_weibo_api_base_url)
+    let req_url = req_url."/statuses/update.json"
+	let req_url = s:add_to_url(req_url, 'access_token='.token)
+
+    "let [error, output] = s:run_curl(req_url, '', s:get_proxy(), s:get_proxy_login(), { "dummy" : "1" })
+	let parms["status"] = mesg
+	let parms["source"] = "vimbo"
+	let post_data = ''
+    for key in sort(keys(parms))
+	let value = s:url_encode(parms[key])
+	let post_data .= key . "=" . value . "&"
+    endfor
+
+    let output = system("curl -s -d \"".post_data. "\" ".req_url)
+
+    let result = s:parse_json(output)
+
+    if has_key(result, 'error') && has_key(result, 'error_code')
+		call s:errormsg("Error Posting Weibo ".result.error_code.":".result.error)
+		return ""
+	else
+	    call s:add_update(output)
+	    redraw
+	    echo "Your tweet was sent. You used ".mesglen." characters."
+	endif
+    endif
+endfunction
+
+
+function! s:CmdLine_Weibo(initstr, inreplyto)
+    call inputsave()
+    redraw
+    let mesg = input("Your Weibo: ", a:initstr)
+    call inputrestore()
+    call s:post_weibo(mesg, a:inreplyto)
 endfunction
 
 if !exists(":Summize")
