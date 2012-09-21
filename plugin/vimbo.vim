@@ -13,10 +13,10 @@
 " ==============================================================
 
 " Load this module only once.
-if exists('loaded_twitvim')
+if exists('loaded_vimbo')
     finish
 endif
-let loaded_twitvim = 1
+let loaded_vimbo = 1
 
 " Avoid side-effects from cpoptions setting.
 let s:save_cpo = &cpo
