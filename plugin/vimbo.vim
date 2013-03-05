@@ -5228,7 +5228,7 @@ function! s:do_oauth2()
     " Get the timestamp and add to hash
     let parms["response_type"] = "code"
 
-    let parms["redirect_uri"] = "http://vimbo.sinaapp.com/auth"
+    let parms["redirect_uri"] = "http://vimbo.perlfect.me/auth"
 
     let req_url = s:to_https(s:gc_weibo_login_url)
 
